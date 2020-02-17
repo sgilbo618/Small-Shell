@@ -19,15 +19,23 @@
 #define NUM_BLT_INS 3
 char *BUILT_INS[NUM_BLT_INS] = {"exit", "cd", "status"};
 
+
+// Struct for holding exit/termination status
+struct Status
+{
+	int exitStatus;
+	int termStatus;
+};
+
 // Prototypes
 bool is_empty(char *command);
 void parse_args_to_arr(char *line, char *arguments[], int *numArgs);
 void free_args_memory(char *arguments[], int numArgs);
 bool is_built_in(char *command);
-void execute_built_in(char *arguments[], DynArr *cpids);
+void execute_built_in(char *arguments[], DynArr *cpids, struct Status lastStatus);
 void my_exit(DynArr *cpids);
 void my_cd(char *path);
-void my_status();
+void my_status(struct Status lastStatus);
 
 
 /*******************************************************************************
@@ -51,6 +59,9 @@ void main()
 	// Create dynamic array to store child PIDs
 	DynArr *cpids;
 	cpids = newDynArr(10);
+
+	// Store status of last foreground process
+	struct Status lastStatus = {0, -5}; // init with exit=0
 
 	// Create and set sigaction
 	// Source: 3.3 Advanced User Input with getline()
@@ -92,7 +103,7 @@ void main()
 
 		if(is_built_in(arguments[0]))
 		{
-			execute_built_in(arguments, cpids);
+			execute_built_in(arguments, cpids, lastStatus);
 		}
 			
 
@@ -111,12 +122,27 @@ void main()
 ********************************************************************************/
 
 /*******************************************************************************
- * Function:
- * Description:
+ * Function: my_status(struct Status lastStatus)
+ * Description: Takes in a struct status that holds either the last exit status
+ * 				or the last terminating signal number. The exit status being set
+ * 				to -100 indicates that the last process was terminated, otherwise
+ * 				the last process was exited. The corresponding message will be
+ * 				displayed to the user.
 ********************************************************************************/
-void my_status()
+void my_status(struct Status lastStatus)
 {
-	printf("in status\n");
+	// The last process exited
+	if (lastStatus.exitStatus != -100)
+	{
+		printf("exit value %d\n", lastStatus.exitStatus);
+		fflush(stdout);
+	}
+	// The last process was terminated
+	else
+	{
+		printf("terminated by signal %d\n", lastStatus.termStatus);
+		fflush(stdout);
+	}
 }
 
 
@@ -164,13 +190,14 @@ void my_exit(DynArr *cpids)
 /*******************************************************************************
  * Function: execute_built_in(char *arguemtns[], DynArr *cpids)
  * Description: Takes in an array of user inputted arguments in which the first 
- * 				argument is a built in command, an array of child pids, and
- *
+ * 				argument is a built in command, an array of child pids, and an
+ *				int that represents the either the exit status or terminating
+ *				signal number of the last ran foreground process.
  * 				Uses the first argument from the user to determine which built
  * 				in command to run. 
  * Currently supports EXIT, CD, and STATUS
 ********************************************************************************/
-void execute_built_in(char *arguments[], DynArr *cpids)
+void execute_built_in(char *arguments[], DynArr *cpids, struct Status lastStatus)
 {
 	// EXIT
 	if(strcmp(arguments[0], "exit") == 0)
@@ -182,7 +209,7 @@ void execute_built_in(char *arguments[], DynArr *cpids)
 	
 	// STATUS
 	else if(strcmp(arguments[0], "status") == 0)
-		my_status();
+		my_status(lastStatus);
 }
 
 
