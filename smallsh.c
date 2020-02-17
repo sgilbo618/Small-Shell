@@ -11,6 +11,8 @@
 #include <signal.h>
 #include <unistd.h>
 #include <stdbool.h>
+#include <sys/types.h>
+#include <sys/wait.h>
 
 #include "dynArray.h"
 
@@ -36,6 +38,8 @@ void execute_built_in(char *arguments[], DynArr *cpids, struct Status lastStatus
 void my_exit(DynArr *cpids);
 void my_cd(char *path);
 void my_status(struct Status lastStatus);
+void check_exit_status(struct Status *lastStatus, int childExitMethod);
+void execute(char *arguments[]);
 
 
 /*******************************************************************************
@@ -63,13 +67,13 @@ void main()
 	// Store status of last foreground process
 	struct Status lastStatus = {0, -5}; // init with exit=0
 
-	// Create and set sigaction
+	/* Create and set sigaction
 	// Source: 3.3 Advanced User Input with getline()
 	struct sigaction SIGINT_action = {0}; // init struct to 0
 	SIGINT_action.sa_handler = catch_SIGINT; // set function
 	sigfillset(&SIGINT_action.sa_mask); // fill mask with all signals
 	sigaction(SIGINT, &SIGINT_action, NULL); // set sigaction
-
+*/
 	// Buffer setup
 	// source: 3.3 Advanced User Input with getline()
 	int numCharsEntered = -5;
@@ -79,8 +83,14 @@ void main()
 	
 	// Set up input loop
 	// Source: 3.3 Advanced User Input with getline()
+	int NUM_FORKS = 0;
 	while(1)
 	{
+		if (NUM_FORKS > 20)
+		{
+			abort();
+		}
+
 		// Get input
 		do
 		{
@@ -101,9 +111,34 @@ void main()
 		int numArgs = 0;
 		parse_args_to_arr(lineEntered, arguments, &numArgs);
 
+		// Check for built in commands
 		if(is_built_in(arguments[0]))
 		{
 			execute_built_in(arguments, cpids, lastStatus);
+		}
+		// Otherwise use command execution
+		else
+		{
+			pid_t spawnPid = -5;
+			int childExitMethod = -5;
+			
+			spawnPid = fork();
+			NUM_FORKS++;
+			switch (spawnPid)
+			{
+				case -1:
+					perror("Unable to create fork");
+					exit(1);
+					break;
+				case 0:
+					execute(arguments);
+					break;
+				default:
+					// Wait for foreground child to execute
+					waitpid(spawnPid, &childExitMethod, 0);
+					// Update lastStatus with result of child execution
+					check_exit_status(&lastStatus, childExitMethod);
+			}
 		}
 			
 
@@ -120,6 +155,47 @@ void main()
  * Function:
  * Description:
 ********************************************************************************/
+
+/*******************************************************************************
+ * Function: execute(char *arguments[])
+ * Description: 
+********************************************************************************/
+void execute(char *arguments[])
+{
+	if (execvp(arguments[0], arguments) < 0)
+	{
+		printf("%s: command not found\n", arguments[0]);
+		fflush(stdout);
+		exit(1);
+	}
+}
+
+
+/*******************************************************************************
+ * Function: check_exit_status(struct Status *lastStatus, int childExitMethod)
+ * Description: Takes in the struct Status that holds either the exit status or
+ * 				termination signal number of the last foreground process and the
+ * 				int returned from the last child process executed. The int is
+ * 				used to determine whether the child process exited or was 
+ * 				terminated with a signal. The values held by the struct are set
+ * 				to reflect the findings.
+********************************************************************************/
+void check_exit_status(struct Status *lastStatus, int childExitMethod)
+{
+	// Process terminated normally, so set the exit status
+	if (WIFEXITED(childExitMethod) != 0)
+	{
+		lastStatus->exitStatus = WEXITSTATUS(childExitMethod);
+		lastStatus->termStatus = -100; // Reset termination status
+	}
+	// Process terminated with signal termination, so set the termination status
+	else if (WIFSIGNALED(childExitMethod) != 0)
+	{
+		lastStatus->termStatus = WTERMSIG(childExitMethod);
+		lastStatus->exitStatus = -100; // Reset exit status
+	}
+}
+
 
 /*******************************************************************************
  * Function: my_status(struct Status lastStatus)
