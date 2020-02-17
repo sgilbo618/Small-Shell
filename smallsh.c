@@ -121,18 +121,31 @@ void my_status()
 
 
 /*******************************************************************************
- * Function:
- * Description:
+ * Function: my_cd(char *path)
+ * Description: Takes in a string for the path attempting to cd to. If the path
+ * 				is not specified, the directory is changed to the HOME directory,
+ * 				otherwise the directory is changed to the passed in path.
 ********************************************************************************/
 void my_cd(char *path)
 {
-	printf("in cd\n");
+	// No path specified, so move to home directory
+	if (path == NULL)
+	{
+		char *home = getenv("HOME");
+		chdir(home);
+	}
+	// Move to specified path
+	else
+	{
+		chdir(path);
+	}
 }
 
 
 /*******************************************************************************
- * Function:
- * Description:
+ * Function: my_exit(DynArr *cpids)
+ * Description: Takes in an array of child pids. Loops through the pids to send
+ * 				SIGTERM signal to each one before exiting the program.
 ********************************************************************************/
 void my_exit(DynArr *cpids)
 {
@@ -149,8 +162,13 @@ void my_exit(DynArr *cpids)
 
 
 /*******************************************************************************
- * Function:
- * Description:
+ * Function: execute_built_in(char *arguemtns[], DynArr *cpids)
+ * Description: Takes in an array of user inputted arguments in which the first 
+ * 				argument is a built in command, an array of child pids, and
+ *
+ * 				Uses the first argument from the user to determine which built
+ * 				in command to run. 
+ * Currently supports EXIT, CD, and STATUS
 ********************************************************************************/
 void execute_built_in(char *arguments[], DynArr *cpids)
 {
