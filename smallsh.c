@@ -12,6 +12,7 @@
 #include <unistd.h>
 #include <stdbool.h>
 
+#include "dynArray.h"
 
 // Constants
 #define MAX_ARGS 513
@@ -23,8 +24,8 @@ bool is_empty(char *command);
 void parse_args_to_arr(char *line, char *arguments[], int *numArgs);
 void free_args_memory(char *arguments[], int numArgs);
 bool is_built_in(char *command);
-void execute_built_in(char *arguments[]);
-void my_exit();
+void execute_built_in(char *arguments[], DynArr *cpids);
+void my_exit(DynArr *cpids);
 void my_cd(char *path);
 void my_status();
 
@@ -47,6 +48,10 @@ void catch_SIGINT(int signo)
 *******************************************************************************/
 void main()
 {
+	// Create dynamic array to store child PIDs
+	DynArr *cpids;
+	cpids = newDynArr(10);
+
 	// Create and set sigaction
 	// Source: 3.3 Advanced User Input with getline()
 	struct sigaction SIGINT_action = {0}; // init struct to 0
@@ -87,12 +92,13 @@ void main()
 
 		if(is_built_in(arguments[0]))
 		{
-			execute_built_in(arguments);
+			execute_built_in(arguments, cpids);
 		}
 			
 
 		// Free memory
 		free_args_memory(arguments, numArgs);
+	//	deleteDynArr(cpids);
 		free(lineEntered);
 		lineEntered = NULL;
 	}
@@ -128,9 +134,17 @@ void my_cd(char *path)
  * Function:
  * Description:
 ********************************************************************************/
-void my_exit()
+void my_exit(DynArr *cpids)
 {
-	printf("in exit\n");
+	// Loop through child pids to kill all child process
+	int size = sizeDynArr(cpids);
+
+	for(int i = 0; i < size; i++)
+	{
+		kill(getDynArr(cpids, i), SIGTERM);
+	}
+	
+	exit(0);
 }
 
 
@@ -138,11 +152,11 @@ void my_exit()
  * Function:
  * Description:
 ********************************************************************************/
-void execute_built_in(char *arguments[])
+void execute_built_in(char *arguments[], DynArr *cpids)
 {
 	// EXIT
 	if(strcmp(arguments[0], "exit") == 0)
-		my_exit();
+		my_exit(cpids);
 
 	// CD
 	else if(strcmp(arguments[0], "cd") == 0)
