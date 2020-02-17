@@ -40,6 +40,8 @@ void my_cd(char *path);
 void my_status(struct Status lastStatus);
 void check_exit_status(struct Status *lastStatus, int childExitMethod);
 void execute(char *arguments[]);
+void check_for_redirect(char *arguments[]);
+int find_symbol(char *arguments[], char *symbol);
 
 
 /*******************************************************************************
@@ -157,11 +159,60 @@ void main()
 ********************************************************************************/
 
 /*******************************************************************************
+ * Function:
+ * Description:
+********************************************************************************/
+int find_symbol(char *arguments[], char *symbol)
+{
+	int position = -10;
+	int i = 0;
+	while (arguments[i] != NULL) // Arguments last position is NULL
+	{
+		// Found the symbol in args, so return the position it is at
+		if (strcmp(arguments[i], symbol) == 0)
+		{
+			position = i;
+			break;
+		}
+		i++;
+	}
+	return position;
+}
+
+
+/*******************************************************************************
+ * Function:
+ * Description:
+********************************************************************************/
+void check_for_redirect(char *arguments[])
+{
+	int pos1 = find_symbol(arguments, ">");	
+	int pos2 = find_symbol(arguments, "<");
+
+	// Found redirection for stdout
+	if (pos1 >= 0)
+	{
+		// set up redirection for out
+		// null out pos	
+	}
+
+	// Found redirection for stdin
+	if (pos2 >= 0)
+	{
+		// set up redirection for in
+		// null out pos
+	}
+}
+
+
+/*******************************************************************************
  * Function: execute(char *arguments[])
  * Description: 
 ********************************************************************************/
 void execute(char *arguments[])
 {
+	check_for_redirect(arguments);
+
 	if (execvp(arguments[0], arguments) < 0)
 	{
 		printf("%s: command not found\n", arguments[0]);
