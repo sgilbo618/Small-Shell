@@ -46,7 +46,7 @@ void check_for_redirect(char *arguments[], bool isBackground);
 int find_symbol(char *arguments[], char *symbol);
 void expand_variable(char *lookIn, char *lookFor);
 bool check_for_background_command(char *arguments[], int *numArgs);
-
+void check_for_background_complete(DynArr *cipds);
 
 
 /*******************************************************************************
@@ -92,6 +92,8 @@ void main()
 	// Source: 3.3 Advanced User Input with getline()
 	while(1)
 	{
+		check_for_background_complete(cpids);
+
 		// Get input
 		do
 		{
@@ -174,6 +176,48 @@ void main()
  * Function:
  * Description:
 ********************************************************************************/
+
+/*******************************************************************************
+ * Function: check_for_background_complete(DynArr *cpids)
+ * Description: Takes in an array of the background child process pids. Loops
+ * 				through them to see if any of them have terminated. If they have
+ * 				they are removed from the array and a message is displayed to 
+ * 				the user.
+********************************************************************************/
+void check_for_background_complete(DynArr *cpids)
+{
+	int size = sizeDynArr(cpids); // Max times to run loop
+	int count = 0; // To track number of times loop has run
+	int i = 0; // To track index of cpids array
+
+	// Loop while cpids is not empty and up until size
+	while (!isEmptyDynArr(cpids) && count < size)
+	{
+		// Check if each process has completed
+		int childExitMethod = -5;
+		int result;
+		result = waitpid(getDynArr(cpids, i), &childExitMethod, WNOHANG);
+		
+		// If it has completed
+		if (result > 0)
+		{
+			// Remove it from cpids
+			removeAtDynArr(cpids, i);
+			i--; // To offset losing an item
+
+			// Print either exit status or termination signal
+			printf("background pid %d is done: ", result);
+			if (WIFEXITED(childExitMethod) != 0)
+				printf("exit value %d\n", WEXITSTATUS(childExitMethod));
+			else if (WIFSIGNALED(childExitMethod) != 0)
+				printf("terminated by signal %d\n", WTERMSIG(childExitMethod));
+			fflush(stdout);
+		}
+		count++;
+		i++;
+	}
+}
+
 
 /*******************************************************************************
  * Function: check_for_background_command(char *arguments[], int *numArgs)
