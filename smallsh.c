@@ -44,6 +44,7 @@ void check_exit_status(struct Status *lastStatus, int childExitMethod);
 void execute(char *arguments[]);
 void check_for_redirect(char *arguments[]);
 int find_symbol(char *arguments[], char *symbol);
+void expand_variable(char *lookIn, char *lookFor);
 
 
 /*******************************************************************************
@@ -103,7 +104,10 @@ void main()
 			}
 		// Keep getting input if line is empty or comment
 		} while (lineEntered == NULL || is_empty(lineEntered));
-
+		
+		// Expand $$ to PID
+		expand_variable(lineEntered, "$$");
+		
 		// Create array and fill with parsed arguments
 		char *arguments[MAX_ARGS]; // Array to store arguments
 		int numArgs = 0;
@@ -156,6 +160,45 @@ void main()
  * Function:
  * Description:
 ********************************************************************************/
+
+/*******************************************************************************
+ * Function: expand_variables(char *lookIn, char *lookFor)
+ * Source: stackoverflow.com/questions/32413667
+ * Description: Takes in a string to look in and a string to look for. Uses 
+ * 				strstr to look for occurances of the lookFor sting inside of the
+ * 				lookIn string. If found, the loofFor portion is removed and 
+ * 				replaces by the PID of the process.
+********************************************************************************/
+void expand_variable(char *lookIn, char *lookFor)
+{	
+	// Get PID and convert to string
+	int pid = getpid();
+	char strPID[8];
+	snprintf(strPID, sizeof(strPID), "%d", pid);
+		
+	char buffer[2100] = { 0 }; // For piecing string back together
+	char *tmpLookIn = lookIn; // For traversing lookIn string
+
+	// Keep going until all lookFors are converted
+	while((tmpLookIn = strstr(tmpLookIn, lookFor))) // Will be NULL if no matches
+	{
+		// Copy up until found lookin
+		strncpy(buffer, lookIn, tmpLookIn-lookIn);
+		buffer[tmpLookIn-lookIn] = '\0';
+		
+		// Add on the PID
+		strcat(buffer, strPID);
+
+		// Add on the rest of string, after lookFor
+		strcat(buffer, tmpLookIn+strlen(lookFor));	
+		
+		// Copy re-built string into lookIn
+		strcpy(lookIn, buffer);
+		
+		tmpLookIn++;
+	}
+}
+
 
 /*******************************************************************************
  * Function: find_symbol(char *arguments[], char *symbol)
