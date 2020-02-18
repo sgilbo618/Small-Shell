@@ -11,7 +11,9 @@
 #include <signal.h>
 #include <unistd.h>
 #include <stdbool.h>
+#include <fcntl.h>
 #include <sys/types.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 
 #include "dynArray.h"
@@ -85,14 +87,8 @@ void main()
 	
 	// Set up input loop
 	// Source: 3.3 Advanced User Input with getline()
-	int NUM_FORKS = 0;
 	while(1)
 	{
-		if (NUM_FORKS > 20)
-		{
-			abort();
-		}
-
 		// Get input
 		do
 		{
@@ -124,17 +120,20 @@ void main()
 			pid_t spawnPid = -5;
 			int childExitMethod = -5;
 			
+			// Create fork
 			spawnPid = fork();
-			NUM_FORKS++;
 			switch (spawnPid)
 			{
+				// ERROR in fork
 				case -1:
 					perror("Unable to create fork");
 					exit(1);
 					break;
+				// Child
 				case 0:
 					execute(arguments);
 					break;
+				// Parent
 				default:
 					// Wait for foreground child to execute
 					waitpid(spawnPid, &childExitMethod, 0);
@@ -159,8 +158,10 @@ void main()
 ********************************************************************************/
 
 /*******************************************************************************
- * Function:
- * Description:
+ * Function: find_symbol(char *arguments[], char *symbol)
+ * Description: Takes in an array of strings and a string to search for. Loops
+ * 				throught the array and if the symbol is found, its position in
+ * 				the array is returned. Other wise -10 is returned.
 ********************************************************************************/
 int find_symbol(char *arguments[], char *symbol)
 {
@@ -181,26 +182,73 @@ int find_symbol(char *arguments[], char *symbol)
 
 
 /*******************************************************************************
- * Function:
- * Description:
+ * Function: check_for_redirect(char *arguments[])
+ * Description: Takes in an array of arguments from the user. Checks for the 
+ * 				symbols that indicate redirection, and if they are found it sets
+ * 				up the redirection using dup2(). "<" represents stdin redirection
+ * 				and opens a file for read only. ">" represents stdout redircetion
+ * 				and opens a file for write only. The found symbols are reset to
+ * 				NULL so that the arguments list will not include them anymore.
 ********************************************************************************/
 void check_for_redirect(char *arguments[])
 {
-	int pos1 = find_symbol(arguments, ">");	
-	int pos2 = find_symbol(arguments, "<");
-
-	// Found redirection for stdout
-	if (pos1 >= 0)
-	{
-		// set up redirection for out
-		// null out pos	
-	}
+	int pos1 = find_symbol(arguments, "<");	// STDIN
+	int pos2 = find_symbol(arguments, ">"); // STDOUT
 
 	// Found redirection for stdin
+	if (pos1 >= 0)
+	{
+		// Open file for input with next arg
+		int sourceFile = open(arguments[pos1+1], O_RDONLY);
+		if (sourceFile == -1)
+		{
+			printf("cannont open %s for input\n", arguments[pos1+1]);
+			fflush(stdout);
+			exit(1);
+		}
+		
+		// Close on exec
+		fcntl(sourceFile, F_SETFD, FD_CLOEXEC);
+		
+		// Redirect input to given file
+		int inResult = dup2(sourceFile, 0);
+		if (inResult == -1)
+		{
+			printf("error in dup2() redirect for input\n");
+			fflush(stdout);
+			exit(2);
+		}
+
+		// NULL out pos so arguments will end with a NULL for exec()
+		arguments[pos1] = NULL;
+	}
+
+	// Found redirection for stdout
 	if (pos2 >= 0)
 	{
-		// set up redirection for in
-		// null out pos
+		// Open file for output with next arg
+		int targetFile = open(arguments[pos2+1], O_WRONLY | O_CREAT | O_TRUNC, 0644);
+		if (targetFile == -1)
+		{
+			printf("cannot open %s for output\n", arguments[pos2+1]);
+			fflush(stdout);
+			exit(1);
+		}
+
+		// Close on exec
+		fcntl(targetFile, F_SETFD, FD_CLOEXEC);
+
+		// Redirect output to given file
+		int outResult = dup2(targetFile, 1);
+		if (outResult == -1)
+		{
+			printf("error in dup2() redirect for output\n");
+			fflush(stdout);
+			exit(2);
+		}
+
+		// NULL out pos	
+		arguments[pos2] = NULL;
 	}
 }
 
