@@ -41,10 +41,12 @@ void my_exit(DynArr *cpids);
 void my_cd(char *path);
 void my_status(struct Status lastStatus);
 void check_exit_status(struct Status *lastStatus, int childExitMethod);
-void execute(char *arguments[]);
-void check_for_redirect(char *arguments[]);
+void execute(char *arguments[], bool isBackground);
+void check_for_redirect(char *arguments[], bool isBackground);
 int find_symbol(char *arguments[], char *symbol);
 void expand_variable(char *lookIn, char *lookFor);
+bool check_for_background_command(char *arguments[], int *numArgs);
+
 
 
 /*******************************************************************************
@@ -123,7 +125,8 @@ void main()
 		{
 			pid_t spawnPid = -5;
 			int childExitMethod = -5;
-			
+			bool isBackground = check_for_background_command(arguments, &numArgs);
+
 			// Create fork
 			spawnPid = fork();
 			switch (spawnPid)
@@ -135,14 +138,25 @@ void main()
 					break;
 				// Child
 				case 0:
-					execute(arguments);
+					execute(arguments, isBackground);
 					break;
 				// Parent
 				default:
-					// Wait for foreground child to execute
-					waitpid(spawnPid, &childExitMethod, 0);
-					// Update lastStatus with result of child execution
-					check_exit_status(&lastStatus, childExitMethod);
+					// Run in background
+					if (isBackground)
+					{
+						// Track child pid and don't wait
+						addDynArr(cpids, spawnPid);
+						printf("background pid is %d\n", spawnPid);
+						fflush(stdout);
+					}
+					// Run in foreground
+					else
+					{
+						// Wait for child and then update status
+						waitpid(spawnPid, &childExitMethod, 0);
+						check_exit_status(&lastStatus, childExitMethod);
+					}
 			}
 		}
 			
@@ -160,6 +174,31 @@ void main()
  * Function:
  * Description:
 ********************************************************************************/
+
+/*******************************************************************************
+ * Function: check_for_background_command(char *arguments[], int *numArgs)
+ * Description: Takes in an array of strings that represent the user entered
+ * 				args and a pointer to the number of args in the array. It looks
+ * 				up the last position of the array and compartes it to "&" to 
+ * 				check if this command is meant to be a background command. Will
+ * 				NULL out the & and return true if found, otherwise returns false.
+********************************************************************************/
+bool check_for_background_command(char *arguments[], int *numArgs)
+{
+	// Look at last arg in list to see if it is &
+	if (strcmp(arguments[(*numArgs)-1], "&") == 0)
+	{
+		// Free the memory for &
+		free(arguments[(*numArgs)-1]);
+		arguments[(*numArgs)-1] = NULL;
+		(*numArgs)--; // Update numArgs
+
+		return true;
+	}
+	// Not background command
+	return false;
+}
+
 
 /*******************************************************************************
  * Function: expand_variables(char *lookIn, char *lookFor)
@@ -233,7 +272,7 @@ int find_symbol(char *arguments[], char *symbol)
  * 				and opens a file for write only. The found symbols are reset to
  * 				NULL so that the arguments list will not include them anymore.
 ********************************************************************************/
-void check_for_redirect(char *arguments[])
+void check_for_redirect(char *arguments[], bool isBackground)
 {
 	int pos1 = find_symbol(arguments, "<");	// STDIN
 	int pos2 = find_symbol(arguments, ">"); // STDOUT
@@ -265,6 +304,30 @@ void check_for_redirect(char *arguments[])
 		// NULL out pos so arguments will end with a NULL for exec()
 		arguments[pos1] = NULL;
 	}
+	// Background command without redirected stdin
+	else if (isBackground)
+	{
+		
+		int sourceFile = open("/dev/null", O_RDONLY);
+		if (sourceFile == -1)
+		{
+			printf("cannont open %s for input\n", arguments[pos1+1]);
+			fflush(stdout);
+			exit(1);
+		}
+		
+		// Close on exec
+		fcntl(sourceFile, F_SETFD, FD_CLOEXEC);
+		
+		// Redirect input to given file
+		int inResult = dup2(sourceFile, 0);
+		if (inResult == -1)
+		{
+			printf("error in dup2() redirect for input\n");
+			fflush(stdout);
+			exit(2);
+		}
+	}
 
 	// Found redirection for stdout
 	if (pos2 >= 0)
@@ -293,16 +356,39 @@ void check_for_redirect(char *arguments[])
 		// NULL out pos	
 		arguments[pos2] = NULL;
 	}
+	else if (isBackground)
+	{
+
+		int targetFile = open("/dev/null", O_WRONLY);
+		if (targetFile == -1)
+		{
+			printf("cannot open %s for output\n", arguments[pos2+1]);
+			fflush(stdout);
+			exit(1);
+		}
+
+		// Close on exec
+		fcntl(targetFile, F_SETFD, FD_CLOEXEC);
+
+		// Redirect output to given file
+		int outResult = dup2(targetFile, 1);
+		if (outResult == -1)
+		{
+			printf("error in dup2() redirect for output\n");
+			fflush(stdout);
+			exit(2);
+		}
+	}
 }
 
 
 /*******************************************************************************
- * Function: execute(char *arguments[])
+ * Function: execute(char *arguments[] bool isBackground)
  * Description: 
 ********************************************************************************/
-void execute(char *arguments[])
+void execute(char *arguments[], bool isBackground)
 {
-	check_for_redirect(arguments);
+	check_for_redirect(arguments, isBackground);
 
 	if (execvp(arguments[0], arguments) < 0)
 	{
