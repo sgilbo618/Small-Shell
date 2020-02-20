@@ -47,18 +47,7 @@ int find_symbol(char *arguments[], char *symbol);
 void expand_variable(char *lookIn, char *lookFor);
 bool check_for_background_command(char *arguments[], int *numArgs);
 void check_for_background_complete(DynArr *cipds);
-
-
-/*******************************************************************************
- * Function: catchSIGINT(int signo)
- * Source: 3.3 Advanced User Input with getline()
- * Description:
-*******************************************************************************/
-void catch_SIGINT(int signo)
-{
-	char *message = "SIGIN. Use CTRL-Z to Stop.\n";
-	write(STDOUT_FILENO, message, 28);
-}
+void catch_SIGINT(int signo);
 
 
 /*******************************************************************************
@@ -67,6 +56,21 @@ void catch_SIGINT(int signo)
 *******************************************************************************/
 void main()
 {
+	// Source: 3.3 Advanced User Input with getline()
+	// SIGINT Default - used by foreground child processes
+	struct sigaction SIGINT_action = {0}; // init struct to 0
+	SIGINT_action.sa_handler = SIG_DFL; // set function
+	sigfillset(&SIGINT_action.sa_mask); // fill mask with all signals
+	SIGINT_action.sa_flags = 0;
+
+	// SIGINT Ignore - used by shell and background processes
+	struct sigaction ignore_action = {0};
+	ignore_action.sa_handler = SIG_IGN;
+
+	// Set sigactions
+	sigaction(SIGINT, &ignore_action, NULL);
+
+
 	// Create dynamic array to store child PIDs
 	DynArr *cpids;
 	cpids = newDynArr(10);
@@ -74,13 +78,6 @@ void main()
 	// Store status of last foreground process
 	struct Status lastStatus = {0, -5}; // init with exit=0
 
-	/* Create and set sigaction
-	// Source: 3.3 Advanced User Input with getline()
-	struct sigaction SIGINT_action = {0}; // init struct to 0
-	SIGINT_action.sa_handler = catch_SIGINT; // set function
-	sigfillset(&SIGINT_action.sa_mask); // fill mask with all signals
-	sigaction(SIGINT, &SIGINT_action, NULL); // set sigaction
-*/
 	// Buffer setup
 	// source: 3.3 Advanced User Input with getline()
 	int numCharsEntered = -5;
@@ -140,6 +137,12 @@ void main()
 					break;
 				// Child
 				case 0:
+					// Set foreground process SIGINT to default
+					if (!isBackground)
+					{
+						sigaction(SIGINT, &SIGINT_action, NULL);
+					}
+
 					execute(arguments, isBackground);
 					break;
 				// Parent
@@ -158,6 +161,12 @@ void main()
 						// Wait for child and then update status
 						waitpid(spawnPid, &childExitMethod, 0);
 						check_exit_status(&lastStatus, childExitMethod);
+						
+						// Check if foreground process was terminated
+						if (WIFSIGNALED(childExitMethod) != 0)
+						{
+							printf("terminated by signal %d\n", lastStatus.termStatus);
+						}
 					}
 			}
 		}
@@ -176,6 +185,26 @@ void main()
  * Function:
  * Description:
 ********************************************************************************/
+
+/*******************************************************************************
+ * Function: catchSIGINT(int signo)
+ * Source: 3.3 Advanced User Input with getline()
+ * Description:
+*******************************************************************************/
+void catch_SIGINT(int signo)
+{
+	int childPID;
+	int childExitMethod;
+	childPID = waitpid(-1, &childExitMethod, WNOHANG);
+
+
+	if (WIFSIGNALED(childExitMethod) != 0 && WTERMSIG(childExitMethod == 2))
+	{
+		char *message = "terminated by signal 2\n";
+		write(STDOUT_FILENO, message, 23);
+	}
+}
+
 
 /*******************************************************************************
  * Function: check_for_background_complete(DynArr *cpids)
@@ -428,12 +457,15 @@ void check_for_redirect(char *arguments[], bool isBackground)
 
 /*******************************************************************************
  * Function: execute(char *arguments[] bool isBackground)
- * Description: 
+ * Description: Takes in an array of user entered arguments and a Boolean that is
+ * 				a flag for background processes. Passes the args to set up any
+ * 				redirection and calls execvp() to execute the desired process.
 ********************************************************************************/
 void execute(char *arguments[], bool isBackground)
 {
 	check_for_redirect(arguments, isBackground);
 
+	// Create the new process
 	if (execvp(arguments[0], arguments) < 0)
 	{
 		printf("%s: command not found\n", arguments[0]);
