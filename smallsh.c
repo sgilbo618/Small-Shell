@@ -12,6 +12,7 @@
 #include <unistd.h>
 #include <stdbool.h>
 #include <fcntl.h>
+#include <errno.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
@@ -21,8 +22,10 @@
 // Constants
 #define MAX_ARGS 513
 #define NUM_BLT_INS 3
-char *BUILT_INS[NUM_BLT_INS] = {"exit", "cd", "status"};
 
+// Globals
+char *BUILT_INS[NUM_BLT_INS] = {"exit", "cd", "status"};
+bool IS_FOREGROUND_ONLY = false;
 
 // Struct for holding exit/termination status
 struct Status
@@ -47,7 +50,7 @@ int find_symbol(char *arguments[], char *symbol);
 void expand_variable(char *lookIn, char *lookFor);
 bool check_for_background_command(char *arguments[], int *numArgs);
 void check_for_background_complete(DynArr *cipds);
-void catch_SIGINT(int signo);
+void catch_SIGTSTP(int signo);
 
 
 /*******************************************************************************
@@ -67,9 +70,15 @@ void main()
 	struct sigaction ignore_action = {0};
 	ignore_action.sa_handler = SIG_IGN;
 
+	// SIGTSTP - toggle foreground-only mode
+	struct sigaction SIGTSTP_action = {0};
+	SIGTSTP_action.sa_handler = catch_SIGTSTP;
+	sigfillset(&SIGTSTP_action.sa_mask);
+	SIGTSTP_action.sa_flags = 0;
+	
 	// Set sigactions
 	sigaction(SIGINT, &ignore_action, NULL);
-
+	sigaction(SIGTSTP, &SIGTSTP_action, NULL);
 
 	// Create dynamic array to store child PIDs
 	DynArr *cpids;
@@ -124,7 +133,19 @@ void main()
 		{
 			pid_t spawnPid = -5;
 			int childExitMethod = -5;
-			bool isBackground = check_for_background_command(arguments, &numArgs);
+			bool isBackground = false;
+			
+			// Check global state to see if background needs to be ignored
+			if (IS_FOREGROUND_ONLY)
+			{
+				// Still call this function to remove "&" arg
+				check_for_background_command(arguments, &numArgs);
+			}
+			else
+			{
+				// Save results of this function if background mode is on
+				isBackground = check_for_background_command(arguments, &numArgs);
+			}
 
 			// Create fork
 			spawnPid = fork();
@@ -142,11 +163,13 @@ void main()
 					{
 						sigaction(SIGINT, &SIGINT_action, NULL);
 					}
-
+					sigaction(SIGTSTP, &ignore_action, NULL);
+					//signal(SIGTSTP, SIG_IGN);
 					execute(arguments, isBackground);
 					break;
 				// Parent
 				default:
+
 					// Run in background
 					if (isBackground)
 					{
@@ -159,13 +182,21 @@ void main()
 					else
 					{
 						// Wait for child and then update status
-						waitpid(spawnPid, &childExitMethod, 0);
+						int result;
+						do
+						{
+							result = waitpid(spawnPid, &childExitMethod, 0);
+
+						// Reset waitpid if interrupted by system call
+						} while (result == -1 && errno == EINTR);
+
 						check_exit_status(&lastStatus, childExitMethod);
 						
 						// Check if foreground process was terminated
 						if (WIFSIGNALED(childExitMethod) != 0)
 						{
 							printf("terminated by signal %d\n", lastStatus.termStatus);
+							fflush(stdout);
 						}
 					}
 			}
@@ -187,21 +218,26 @@ void main()
 ********************************************************************************/
 
 /*******************************************************************************
- * Function: catchSIGINT(int signo)
- * Source: 3.3 Advanced User Input with getline()
- * Description:
+ * Function: catchSIGTSTP(int signo)
+ * Description: Signal handler function for SIGTSTP when user enters CTRL-Z. It
+ * 				toggles the global variable IS_FOREGROUND_ONLY to change the 
+ * 				mode of the shell. Also displays a message to the user.
 *******************************************************************************/
-void catch_SIGINT(int signo)
+void catch_SIGTSTP(int signo)
 {
-	int childPID;
-	int childExitMethod;
-	childPID = waitpid(-1, &childExitMethod, WNOHANG);
-
-
-	if (WIFSIGNALED(childExitMethod) != 0 && WTERMSIG(childExitMethod == 2))
+	// In foreground only mode
+	if (IS_FOREGROUND_ONLY)
 	{
-		char *message = "terminated by signal 2\n";
-		write(STDOUT_FILENO, message, 23);
+		char *message = "Exiting foreground-only mode\n";
+		write(STDOUT_FILENO, message, 29);
+		IS_FOREGROUND_ONLY = false;
+	}
+	// In normal mode
+	else
+	{
+		char *message = "Entering foreground-only mode (& is now ignored)\n";
+		write(STDOUT_FILENO, message, 49);
+		IS_FOREGROUND_ONLY = true;
 	}
 }
 
@@ -560,7 +596,7 @@ void my_exit(DynArr *cpids)
 
 	for(int i = 0; i < size; i++)
 	{
-		kill(getDynArr(cpids, i), SIGTERM);
+		kill(getDynArr(cpids, i), SIGKILL);
 	}
 	
 	exit(0);
