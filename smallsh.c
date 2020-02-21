@@ -2,7 +2,14 @@
  * Name: Samantha Guilbeault
  * Date: February 13, 2020
  * Assignment: Program 3 - smallsh
- * Description:
+ * Description: A small shell program that runs command line instructions and 
+ * 				returns results simailar to bash. It allows for redirection of
+ * 				stdin and stdout, supports foreground and background processes,
+ * 				built in commands (for exit, cd, and status), comments, and uses
+ * 				signal handling for SIGINT and SIGTSTP.
+ * 				SIGINT - will terminate only the foreground command if one is 
+ * 						running.
+ * 				SIGTSTP - will toggle foreground only mode and normal mode.
 *******************************************************************************/
 
 #include <stdio.h>
@@ -16,7 +23,6 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
-
 #include "dynArray.h"
 
 // Constants
@@ -44,8 +50,8 @@ void my_exit(DynArr *cpids);
 void my_cd(char *path);
 void my_status(struct Status lastStatus);
 void check_exit_status(struct Status *lastStatus, int childExitMethod);
-void execute(char *arguments[], bool isBackground);
-void check_for_redirect(char *arguments[], bool isBackground);
+void execute(char *arguments[], int *numArgs, bool isBackground);
+void check_for_redirect(char *arguments[], int *numArgs, bool isBackground);
 int find_symbol(char *arguments[], char *symbol);
 void expand_variable(char *lookIn, char *lookFor);
 bool check_for_background_command(char *arguments[], int *numArgs);
@@ -55,7 +61,10 @@ void catch_SIGTSTP(int signo);
 
 /*******************************************************************************
  * Function: main()
- * Description:
+ * Description: Driving function for the shell program. It sets up the signal
+ * 				handling, tracking child PIDs, tracking exit status, getting
+ * 				user input, executing built in commands, executing other commands,
+ * 				and tracking foreground-only vs normal mode.
 *******************************************************************************/
 void main()
 {
@@ -80,12 +89,15 @@ void main()
 	sigaction(SIGINT, &ignore_action, NULL);
 	sigaction(SIGTSTP, &SIGTSTP_action, NULL);
 
+
 	// Create dynamic array to store child PIDs
 	DynArr *cpids;
 	cpids = newDynArr(10);
 
+
 	// Store status of last foreground process
 	struct Status lastStatus = {0, -5}; // init with exit=0
+
 
 	// Buffer setup
 	// source: 3.3 Advanced User Input with getline()
@@ -94,10 +106,10 @@ void main()
 	size_t bufferSize = 0;
 	char *lineEntered = NULL;
 	
-	// Set up input loop
-	// Source: 3.3 Advanced User Input with getline()
+	// Main shell loop
 	while(1)
 	{
+		// Will display PIDs of background processes completed since last loop
 		check_for_background_complete(cpids);
 
 		// Get input
@@ -115,19 +127,23 @@ void main()
 		// Keep getting input if line is empty or comment
 		} while (lineEntered == NULL || is_empty(lineEntered));
 		
+
 		// Expand $$ to PID
 		expand_variable(lineEntered, "$$");
 		
-		// Create array and fill with parsed arguments
+
+		// Handle args
 		char *arguments[MAX_ARGS]; // Array to store arguments
 		int numArgs = 0;
 		parse_args_to_arr(lineEntered, arguments, &numArgs);
+
 
 		// Check for built in commands
 		if(is_built_in(arguments[0]))
 		{
 			execute_built_in(arguments, cpids, lastStatus);
 		}
+
 		// Otherwise use command execution
 		else
 		{
@@ -137,15 +153,10 @@ void main()
 			
 			// Check global state to see if background needs to be ignored
 			if (IS_FOREGROUND_ONLY)
-			{
-				// Still call this function to remove "&" arg
-				check_for_background_command(arguments, &numArgs);
-			}
+				check_for_background_command(arguments, &numArgs); // To remove &
 			else
-			{
-				// Save results of this function if background mode is on
 				isBackground = check_for_background_command(arguments, &numArgs);
-			}
+
 
 			// Create fork
 			spawnPid = fork();
@@ -156,6 +167,7 @@ void main()
 					perror("Unable to create fork");
 					exit(1);
 					break;
+
 				// Child
 				case 0:
 					// Set foreground process SIGINT to default
@@ -163,10 +175,12 @@ void main()
 					{
 						sigaction(SIGINT, &SIGINT_action, NULL);
 					}
+					// All child ignore SIGTSP
 					sigaction(SIGTSTP, &ignore_action, NULL);
-					//signal(SIGTSTP, SIG_IGN);
-					execute(arguments, isBackground);
+					
+					execute(arguments, &numArgs, isBackground);
 					break;
+				
 				// Parent
 				default:
 
@@ -178,6 +192,7 @@ void main()
 						printf("background pid is %d\n", spawnPid);
 						fflush(stdout);
 					}
+
 					// Run in foreground
 					else
 					{
@@ -186,13 +201,13 @@ void main()
 						do
 						{
 							result = waitpid(spawnPid, &childExitMethod, 0);
-
 						// Reset waitpid if interrupted by system call
 						} while (result == -1 && errno == EINTR);
 
+						// Update status
 						check_exit_status(&lastStatus, childExitMethod);
 						
-						// Check if foreground process was terminated
+						// Let user know if foreground process was terminated
 						if (WIFSIGNALED(childExitMethod) != 0)
 						{
 							printf("terminated by signal %d\n", lastStatus.termStatus);
@@ -202,20 +217,15 @@ void main()
 			}
 		}
 			
-
-		// Free memory
+		// Free memory for input
 		free_args_memory(arguments, numArgs);
-	//	deleteDynArr(cpids);
 		free(lineEntered);
 		lineEntered = NULL;
 	}
+	// Free memory for pids
+	deleteDynArr(cpids);
 }
 
-
-/*******************************************************************************
- * Function:
- * Description:
-********************************************************************************/
 
 /*******************************************************************************
  * Function: catchSIGTSTP(int signo)
@@ -373,24 +383,31 @@ int find_symbol(char *arguments[], char *symbol)
 
 
 /*******************************************************************************
- * Function: check_for_redirect(char *arguments[])
- * Description: Takes in an array of arguments from the user. Checks for the 
- * 				symbols that indicate redirection, and if they are found it sets
- * 				up the redirection using dup2(). "<" represents stdin redirection
- * 				and opens a file for read only. ">" represents stdout redircetion
- * 				and opens a file for write only. The found symbols are reset to
- * 				NULL so that the arguments list will not include them anymore.
+ * Function: check_for_redirect(char *arguments[], int* numArgs, bool isBackground)
+ * Description: Takes in an array of arguments from the user and a Boolean to 
+ * 				represent whether or not this is for a background process. It
+ * 				searches the args to determine is a redirection is commanded and
+ * 				sets up the redirction to the designated files if it is. If no
+ * 				redirection is implicated for a background process, then it sets
+ * 				up redirection to dev/null.
 ********************************************************************************/
-void check_for_redirect(char *arguments[], bool isBackground)
+void check_for_redirect(char *arguments[], int *numArgs, bool isBackground)
 {
 	int pos1 = find_symbol(arguments, "<");	// STDIN
 	int pos2 = find_symbol(arguments, ">"); // STDOUT
 
-	// Found redirection for stdin
-	if (pos1 >= 0)
+	// Found redirection for stdin or background
+	if (pos1 >= 0 || isBackground)
 	{
+		int sourceFile;
+
 		// Open file for input with next arg
-		int sourceFile = open(arguments[pos1+1], O_RDONLY);
+		if (pos1 >= 0)
+			sourceFile = open(arguments[pos1+1], O_RDONLY);
+		// Open dev/null for background
+		else
+			sourceFile = open("/dev/null", O_RDONLY);
+		
 		if (sourceFile == -1)
 		{
 			printf("cannont open %s for input\n", arguments[pos1+1]);
@@ -411,38 +428,30 @@ void check_for_redirect(char *arguments[], bool isBackground)
 		}
 
 		// NULL out pos so arguments will end with a NULL for exec()
-		arguments[pos1] = NULL;
-	}
-	// Background command without redirected stdin
-	else if (isBackground)
-	{
-		
-		int sourceFile = open("/dev/null", O_RDONLY);
-		if (sourceFile == -1)
-		{
-			printf("cannont open %s for input\n", arguments[pos1+1]);
-			fflush(stdout);
-			exit(1);
-		}
-		
-		// Close on exec
-		fcntl(sourceFile, F_SETFD, FD_CLOEXEC);
-		
-		// Redirect input to given file
-		int inResult = dup2(sourceFile, 0);
-		if (inResult == -1)
-		{
-			printf("error in dup2() redirect for input\n");
-			fflush(stdout);
-			exit(2);
+		if (pos1 >= 0)
+		{	
+			free(arguments[pos1]);
+			arguments[pos1] = NULL;
+			(*numArgs)--;
+
+			free(arguments[pos1+1]);
+			arguments[pos1+1] = NULL;
+			(*numArgs)--;
 		}
 	}
 
-	// Found redirection for stdout
-	if (pos2 >= 0)
+	// Found redirection for stdout or background
+	if (pos2 >= 0 || isBackground)
 	{
+		int targetFile;
+
 		// Open file for output with next arg
-		int targetFile = open(arguments[pos2+1], O_WRONLY | O_CREAT | O_TRUNC, 0644);
+		if (pos2 >= 0)
+			 targetFile = open(arguments[pos2+1], O_WRONLY | O_CREAT | O_TRUNC, 0644);
+		// Open dev/null for background
+		else
+			targetFile = open("/dev/null", O_WRONLY);
+
 		if (targetFile == -1)
 		{
 			printf("cannot open %s for output\n", arguments[pos2+1]);
@@ -463,43 +472,29 @@ void check_for_redirect(char *arguments[], bool isBackground)
 		}
 
 		// NULL out pos	
-		arguments[pos2] = NULL;
-	}
-	else if (isBackground)
-	{
-
-		int targetFile = open("/dev/null", O_WRONLY);
-		if (targetFile == -1)
+		if (pos2 >= 0)
 		{
-			printf("cannot open %s for output\n", arguments[pos2+1]);
-			fflush(stdout);
-			exit(1);
-		}
+			free(arguments[pos2]);
+			arguments[pos2] = NULL;
+			(*numArgs)--;
 
-		// Close on exec
-		fcntl(targetFile, F_SETFD, FD_CLOEXEC);
-
-		// Redirect output to given file
-		int outResult = dup2(targetFile, 1);
-		if (outResult == -1)
-		{
-			printf("error in dup2() redirect for output\n");
-			fflush(stdout);
-			exit(2);
+			free(arguments[pos2+1]);
+			arguments[pos2+1] = NULL;
+			(*numArgs)--;
 		}
 	}
 }
 
 
 /*******************************************************************************
- * Function: execute(char *arguments[] bool isBackground)
+ * Function: execute(char *arguments[], int *numArgs, bool isBackground)
  * Description: Takes in an array of user entered arguments and a Boolean that is
  * 				a flag for background processes. Passes the args to set up any
  * 				redirection and calls execvp() to execute the desired process.
 ********************************************************************************/
-void execute(char *arguments[], bool isBackground)
+void execute(char *arguments[], int *numArgs, bool isBackground)
 {
-	check_for_redirect(arguments, isBackground);
+	check_for_redirect(arguments, numArgs, isBackground);
 
 	// Create the new process
 	if (execvp(arguments[0], arguments) < 0)
@@ -705,7 +700,3 @@ bool is_empty(char *command)
 	else
 		return false;
 }
-
-
-
-
