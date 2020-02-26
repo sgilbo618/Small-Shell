@@ -27,6 +27,7 @@
 
 // Constants
 #define MAX_ARGS 513
+#define MAX_INPUT 2048
 #define NUM_BLT_INS 3
 
 // Globals
@@ -89,6 +90,10 @@ void main()
 	sigaction(SIGINT, &ignore_action, NULL);
 	sigaction(SIGTSTP, &SIGTSTP_action, NULL);
 
+	// Set up signal set for blocking in foreground child
+	sigset_t signal_set;
+	sigemptyset(&signal_set);
+	sigaddset(&signal_set, SIGTSTP);
 
 	// Create dynamic array to store child PIDs
 	DynArr *cpids;
@@ -123,6 +128,13 @@ void main()
 			{	
 				lineEntered = NULL;
 				clearerr(stdin);
+			}
+			else if (numCharsEntered > MAX_INPUT) // only allow input up to 2048 chars
+			{
+				free(lineEntered);
+				lineEntered = NULL;
+				printf("Error - exceeded max input\n");
+				fflush(stdout);
 			}
 		// Keep getting input if line is empty or comment
 		} while (lineEntered == NULL || is_empty(lineEntered));
@@ -170,14 +182,15 @@ void main()
 
 				// Child
 				case 0:
-					// Set foreground process SIGINT to default
+					// Foreground process only
 					if (!isBackground)
 					{
-						sigaction(SIGINT, &SIGINT_action, NULL);
+						sigaction(SIGINT, &SIGINT_action, NULL); // Set SIGINT to default
 					}
+
 					// All child ignore SIGTSP
 					sigaction(SIGTSTP, &ignore_action, NULL);
-					
+
 					execute(arguments, &numArgs, isBackground);
 					break;
 				
@@ -196,6 +209,9 @@ void main()
 					// Run in foreground
 					else
 					{
+						
+						sigprocmask(SIG_BLOCK, &signal_set, NULL); // Block SIGTSTP
+						
 						// Wait for child and then update status
 						int result;
 						do
@@ -204,6 +220,8 @@ void main()
 						// Reset waitpid if interrupted by system call
 						} while (result == -1 && errno == EINTR);
 
+						sigprocmask(SIG_UNBLOCK, &signal_set, NULL);
+					
 						// Update status
 						check_exit_status(&lastStatus, childExitMethod);
 						
