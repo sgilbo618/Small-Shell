@@ -1,7 +1,6 @@
 /*******************************************************************************
  * Name: Samantha Guilbeault
  * Date: February 13, 2020
- * Assignment: Program 3 - smallsh
  * Description: A small shell program that runs command line instructions and 
  * 				returns results simailar to bash. It allows for redirection of
  * 				stdin and stdout, supports foreground and background processes,
